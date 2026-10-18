@@ -1,8 +1,11 @@
 from flask import Flask, jsonify, request, render_template, session, redirect, url_for
 from urllib.parse import urlparse, urljoin, urlencode
 from functools import wraps
+import hmac
 import json
 import os
+import secrets
+import tempfile
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -31,6 +34,10 @@ AREA_NAME = "青森市"
 # 気象庁の市区町村コード（青森市）
 AREA_CODE = "0220100"
 SHELTER_STATUSES = ("未開設", "開設中", "閉鎖")
+INSTRUCTION_TARGETS = ("住民", "職員", "道路管理課")
+INSTRUCTION_URGENCIES = ("高", "中", "低")
+INSTRUCTION_DISTRICTS = ("A地区", "B地区")
+INSTRUCTION_STATUSES = ("未対応", "対応中", "完了")
 
 WARNING_URL = (
     f"https://www.jma.go.jp/bosai/warning/data/r8/{PREFECTURE_CODE}.json"
@@ -103,11 +110,92 @@ instructions = load_json(INSTRUCTIONS_FILE, [])
 
 def save_instructions():
     """指示ボードのデータをファイルに保存する"""
+    temporary_path = None
     try:
-        with open(INSTRUCTIONS_FILE, 'w', encoding='utf-8') as f:
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            encoding='utf-8',
+            dir=os.path.dirname(INSTRUCTIONS_FILE),
+            prefix='.instructions-',
+            suffix='.tmp',
+            delete=False
+        ) as f:
+            temporary_path = f.name
             json.dump(instructions, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, INSTRUCTIONS_FILE)
     except Exception:
-        pass
+        if temporary_path and os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+        raise
+
+
+def get_board_csrf_token():
+    token = session.get('board_csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['board_csrf_token'] = token
+    return token
+
+
+def is_valid_board_csrf_token(token):
+    expected = session.get('board_csrf_token', '')
+    return bool(expected and token and hmac.compare_digest(expected, token))
+
+
+def validate_instruction_payload(values):
+    """指示の入力値と現在の避難所をサーバー側で検証する"""
+    content = values.get('content', '').strip()
+    easy_content = values.get('easy_content', '').strip()
+    target = values.get('target', '')
+    urgency = values.get('urgency', '')
+    district = values.get('district', '')
+
+    if not content:
+        return None, '指示・発信内容を入力してください。'
+    if len(content) > 1000:
+        return None, '指示・発信内容は1000文字以内で入力してください。'
+    if len(easy_content) > 1000:
+        return None, 'やさしい日本語は1000文字以内で入力してください。'
+    if target not in INSTRUCTION_TARGETS:
+        return None, '宛先を選択してください。'
+    if urgency not in INSTRUCTION_URGENCIES:
+        return None, '緊急度を選択してください。'
+    if district not in INSTRUCTION_DISTRICTS:
+        return None, '対象地区を選択してください。'
+
+    try:
+        shelter_id = int(values.get('shelter_id', ''))
+    except (TypeError, ValueError):
+        return None, '避難先を選択してください。'
+    shelter = next((item for item in shelters if item.get('id') == shelter_id), None)
+    if shelter is None or not shelter.get('name'):
+        return None, '現在登録されている避難先を選択してください。'
+
+    return {
+        'content': content,
+        'easy_content': easy_content,
+        'target': target,
+        'urgency': urgency,
+        'district': district,
+        'shelter_id': shelter_id,
+        'shelter': shelter['name']
+    }, None
+
+
+def parse_instruction_datetime(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    try:
+        return datetime.strptime(value, '%Y年%m月%d日 %H:%M').replace(tzinfo=JST)
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return parsed.replace(tzinfo=JST) if parsed.tzinfo is None else parsed.astimezone(JST)
+        except ValueError:
+            return None
 
 def save_shelters():
     """避難所データをファイルに保存する"""
@@ -176,6 +264,77 @@ def format_report_time(iso_str):
 def filter_shelters(district=None):
     """district 指定があれば一致する避難所のみ、なければ全件を返す"""
     return [s for s in shelters if not district or s.get('district') == district]
+
+
+def build_shelter_comparison(shelter):
+    """旧形式データを含む避難所を比較画面用の表示情報に整える"""
+    capacity = shelter.get('capacity')
+    evacuees = shelter.get('evacuees')
+    valid_capacity = isinstance(capacity, int) and not isinstance(capacity, bool) and capacity >= 1
+    valid_evacuees = isinstance(evacuees, int) and not isinstance(evacuees, bool) and evacuees >= 0
+
+    if valid_capacity and valid_evacuees:
+        available = capacity - evacuees
+        if available < 0:
+            availability_label = '定員超過'
+            availability_detail = f'{abs(available)}人超過'
+            availability_class = 'over-capacity'
+        elif available == 0:
+            availability_label = '満員'
+            availability_detail = '空き 0人'
+            availability_class = 'full'
+        elif available <= capacity * 0.2:
+            availability_label = '残りわずか'
+            availability_detail = f'空き {available}人'
+            availability_class = 'few-spaces'
+        else:
+            availability_label = '空きあり'
+            availability_detail = f'空き {available}人'
+            availability_class = 'spaces-available'
+    else:
+        availability_label = '状況不明'
+        availability_detail = '人数未登録'
+        availability_class = 'unknown'
+
+    pet_allowed = shelter.get('pet_allowed')
+    pet_label = '可' if pet_allowed is True else '不可' if pet_allowed is False else '未確認'
+    barrier_free = shelter.get('barrier_free')
+    barrier_free_label = 'あり' if barrier_free is True else 'なし' if barrier_free is False else '未確認'
+    shelter_status = shelter.get('status')
+    if shelter_status not in SHELTER_STATUSES:
+        shelter_status = '未登録'
+
+    return {
+        'shelter': shelter,
+        'address': shelter.get('address') or '未登録',
+        'capacity_display': str(capacity) if valid_capacity else '未登録',
+        'evacuees_display': str(evacuees) if valid_evacuees else '未登録',
+        'availability_label': availability_label,
+        'availability_detail': availability_detail,
+        'availability_class': availability_class,
+        'pet_label': pet_label,
+        'barrier_free_label': barrier_free_label,
+        'status_display': shelter_status
+    }
+
+
+def render_shelter_results(query='', district=None, error=None, success=None):
+    normalized_query = query.casefold()
+    candidate_shelters = filter_shelters(district) if district else shelters
+    matching_shelters = [
+        shelter for shelter in candidate_shelters
+        if not normalized_query
+        or normalized_query in shelter.get('name', '').casefold()
+        or normalized_query in shelter.get('address', '').casefold()
+    ]
+    return render_template(
+        'search_results.html',
+        results=[build_shelter_comparison(shelter) for shelter in matching_shelters],
+        query=query,
+        district=district or '',
+        error=error,
+        success=success
+    )
 
 
 def parse_area_warnings(warning_data):
@@ -277,7 +436,18 @@ def get_weather_warnings():
 # トップページ：templates/index.html を返す（住民向け指示も表示する）
 @app.route('/')
 def index():
-    resident_notices = [i for i in instructions if i.get('target') == '住民']
+    resident_notices = [
+        dict(instruction) for instruction in instructions
+        if instruction.get('target') == '住民' and instruction.get('published') is True
+    ]
+    minimum_datetime = datetime.min.replace(tzinfo=JST)
+    resident_notices.sort(
+        key=lambda instruction: (
+            parse_instruction_datetime(instruction.get('created_at')) is not None,
+            parse_instruction_datetime(instruction.get('created_at')) or minimum_datetime
+        ),
+        reverse=True
+    )
     map_shelters = [
         {
             'id': shelter.get('id'),
@@ -461,34 +631,225 @@ def shelter_register():
 # 避難所検索ページ
 @app.route('/shelter_search')
 def shelter_search():
-    return render_template('shelter_search.html')
+    return render_template(
+        'shelter_search.html',
+        search_term=request.args.get('q', '').strip()
+    )
 
 # 全施設一覧ページ
 @app.route('/all_shelters')
 def all_shelters():
-    return render_template('search_results.html', results=shelters)
+    return render_shelter_results()
 
 
-# 指示ボード：住民向けの指示を一覧で確認する
-@app.route('/board')
+@app.route('/shelters/<int:shelter_id>/comparison', methods=['POST'])
+@login_required
+def update_shelter_comparison(shelter_id):
+    shelter = next((item for item in shelters if item.get('id') == shelter_id), None)
+    query = request.form.get('q', '').strip()
+    district = request.form.get('district', '').strip()
+    if shelter is None:
+        return render_shelter_results(query=query, district=district, error='避難所が見つかりません。'), 404
+
+    try:
+        capacity = int(request.form.get('capacity', '').strip())
+        evacuees = int(request.form.get('evacuees', '').strip())
+    except ValueError:
+        return render_shelter_results(
+            query=query,
+            district=district,
+            error='収容人数と現在の避難者数は整数で入力してください。'
+        ), 400
+
+    if capacity < 1:
+        return render_shelter_results(query=query, district=district, error='収容人数は1人以上で入力してください。'), 400
+    if evacuees < 0:
+        return render_shelter_results(query=query, district=district, error='現在の避難者数は0人以上で入力してください。'), 400
+
+    feature_values = {'yes': True, 'no': False, 'unknown': None}
+    pet_value = request.form.get('pet_allowed')
+    barrier_value = request.form.get('barrier_free')
+    if pet_value not in feature_values or barrier_value not in feature_values:
+        return render_shelter_results(query=query, district=district, error='設備情報の選択内容を確認してください。'), 400
+
+    previous_values = shelter.copy()
+    shelter.update(
+        capacity=capacity,
+        evacuees=evacuees,
+        pet_allowed=feature_values[pet_value],
+        barrier_free=feature_values[barrier_value]
+    )
+    try:
+        save_shelters()
+    except OSError:
+        shelter.clear()
+        shelter.update(previous_values)
+        return render_shelter_results(query=query, district=district, error='保存に失敗しました。変更内容は反映されていません。'), 500
+
+    return render_shelter_results(query=query, district=district, success='避難所情報を更新しました。')
+
+
+def prepare_board_instructions(sort_newest=False):
+    rows = []
+    for instruction in instructions:
+        row = dict(instruction)
+        row['content_display'] = instruction.get('content') or '未設定'
+        row['easy_content_display'] = instruction.get('easy_content') or '通常文を表示'
+        row['target_display'] = instruction.get('target') if instruction.get('target') in INSTRUCTION_TARGETS else '未設定'
+        row['urgency_display'] = instruction.get('urgency') if instruction.get('urgency') in INSTRUCTION_URGENCIES else '未設定'
+        row['district_display'] = instruction.get('district') if instruction.get('district') in INSTRUCTION_DISTRICTS else '未設定'
+        row['shelter_display'] = instruction.get('shelter') or '未設定'
+        row['status_display'] = instruction.get('status') if instruction.get('status') in INSTRUCTION_STATUSES else '未対応'
+        row['registered_display'] = instruction.get('created_at') or '未設定'
+        if instruction.get('published') is True:
+            row['published_display'] = '公開済み' if instruction.get('target') == '住民' else '住民向け未公開'
+        elif 'published' in instruction:
+            row['published_display'] = '未公開'
+        else:
+            row['published_display'] = '未設定'
+        rows.append((row, parse_instruction_datetime(instruction.get('created_at'))))
+
+    if sort_newest:
+        minimum_datetime = datetime.min.replace(tzinfo=JST)
+        rows.sort(key=lambda pair: (pair[1] is not None, pair[1] or minimum_datetime), reverse=True)
+    return [row for row, _ in rows]
+
+
+def render_board_page(form_values=None, error=None, success=None, sort_newest=False):
+    return render_template(
+        'board.html',
+        instructions=prepare_board_instructions(sort_newest),
+        shelters=shelters,
+        form_values=form_values or {},
+        error=error,
+        success=success,
+        targets=INSTRUCTION_TARGETS,
+        urgencies=INSTRUCTION_URGENCIES,
+        districts=INSTRUCTION_DISTRICTS,
+        statuses=INSTRUCTION_STATUSES,
+        csrf_token=get_board_csrf_token(),
+        sort_newest=sort_newest
+    )
+
+
+@app.route('/board', methods=['GET', 'POST'])
 @login_required
 def board():
-    resident_instructions = [i for i in instructions if i.get('target') == '住民']
-    return render_template('board.html', instructions=resident_instructions)
+    sort_newest = request.values.get('sort') == 'newest'
+    if request.method == 'GET':
+        message = session.pop('board_success_message', None)
+        return render_board_page(success=message, sort_newest=sort_newest)
+
+    if not is_valid_board_csrf_token(request.form.get('csrf_token')):
+        return render_board_page(
+            error='画面の有効期限が切れました。入力内容を確認して再度お試しください。',
+            sort_newest=sort_newest
+        ), 400
+
+    action = request.form.get('action')
+    if action == 'preview':
+        payload, error = validate_instruction_payload(request.form)
+        if error:
+            return render_board_page(form_values=request.form, error=error, sort_newest=sort_newest), 400
+
+        pending = {
+            **payload,
+            'created_at': get_japan_time(),
+            'pending_token': secrets.token_urlsafe(32)
+        }
+        session['pending_instruction'] = pending
+        return render_template(
+            'board_confirm.html',
+            instruction=pending,
+            csrf_token=get_board_csrf_token()
+        )
+
+    pending = session.get('pending_instruction')
+    if not isinstance(pending, dict):
+        return render_board_page(error='確認中の指示が見つかりません。最初から入力してください。'), 400
+
+    submitted_pending_token = request.form.get('pending_token', '')
+    if not hmac.compare_digest(pending.get('pending_token', ''), submitted_pending_token):
+        return render_board_page(error='確認情報が一致しません。最初から入力してください。'), 400
+
+    if action == 'edit':
+        session.pop('pending_instruction', None)
+        return render_board_page(form_values=pending)
+
+    if action != 'confirm':
+        return render_board_page(error='操作を確認してください。'), 400
+
+    payload, error = validate_instruction_payload(pending)
+    if error:
+        session.pop('pending_instruction', None)
+        return render_board_page(error=error), 400
+
+    existing_ids = [
+        item.get('id') for item in instructions
+        if isinstance(item.get('id'), int) and not isinstance(item.get('id'), bool)
+    ]
+    instruction_id = max(existing_ids, default=0) + 1
+    published = payload['target'] == '住民'
+    new_instruction = {
+        'id': instruction_id,
+        **payload,
+        'status': '未対応',
+        'created_at': pending['created_at'],
+        'updated_at': pending['created_at'],
+        'published': published,
+        'published_at': pending['created_at'] if published else ''
+    }
+    instructions.append(new_instruction)
+    try:
+        save_instructions()
+    except OSError:
+        instructions.pop()
+        return render_template(
+            'board_confirm.html',
+            instruction=pending,
+            csrf_token=get_board_csrf_token(),
+            error='保存に失敗しました。指示は登録・発信されていません。'
+        ), 500
+
+    session.pop('pending_instruction', None)
+    session.pop('board_csrf_token', None)
+    session['board_success_message'] = '指示を登録しました。'
+    return redirect(url_for('board', sort='newest'))
+
+
+@app.route('/board/<int:instruction_id>/status', methods=['POST'])
+@login_required
+def update_instruction_status(instruction_id):
+    sort_newest = request.form.get('sort') == 'newest'
+    if not is_valid_board_csrf_token(request.form.get('csrf_token')):
+        return render_board_page(error='画面の有効期限が切れました。再度お試しください。', sort_newest=sort_newest), 400
+
+    instruction = next((item for item in instructions if item.get('id') == instruction_id), None)
+    if instruction is None:
+        return render_board_page(error='対象の指示が見つかりません。', sort_newest=sort_newest), 404
+
+    status = request.form.get('status', '')
+    if status not in INSTRUCTION_STATUSES:
+        return render_board_page(error='対応状況を選択してください。', sort_newest=sort_newest), 400
+
+    previous_values = instruction.copy()
+    instruction['status'] = status
+    instruction['updated_at'] = get_japan_time()
+    try:
+        save_instructions()
+    except OSError:
+        instruction.clear()
+        instruction.update(previous_values)
+        return render_board_page(error='保存に失敗しました。対応状況は変更されていません。', sort_newest=sort_newest), 500
+
+    return render_board_page(success='対応状況を更新しました。', sort_newest=sort_newest)
 
 # 検索結果ページ：templates/search_results.html を返す
 @app.route('/search_results')
 def search_results():
     query = request.args.get('q', '').strip()
-    if query:
-        normalized_query = query.casefold()
-        results = [
-            shelter for shelter in shelters
-            if normalized_query in shelter.get('name', '').casefold()
-        ]
-    else:
-        results = filter_shelters(request.args.get('district'))
-    return render_template('search_results.html', results=results, query=query)
+    district = request.args.get('district', '').strip()
+    return render_shelter_results(query=query, district=district)
 
 # JSON API：/shelters?district=地区名
 @app.route('/shelters', methods=['GET'])

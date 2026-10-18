@@ -122,6 +122,114 @@
         gap: 34px;
     }
 
+    .resident-notice-panel {
+        margin-bottom: 28px;
+    }
+
+    .resident-notice-heading,
+    .resident-notice-tools,
+    .resident-notice-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .resident-notice-heading {
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .resident-notice-heading h2 {
+        margin: 0;
+        color: #2453a1;
+        font-size: 22px;
+    }
+
+    .resident-notice-tools {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .resident-notice-tools button {
+        min-height: 38px;
+        padding: 7px 11px;
+        border: 1px solid #cbd5e2;
+        border-radius: 5px;
+        background: #fff;
+        color: #2453a1;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+    }
+
+    .resident-notice-tools button:hover {
+        background: #eef3fb;
+    }
+
+    .resident-notice-tools button:focus-visible {
+        outline: 2px solid #2453a1;
+        outline-offset: 2px;
+    }
+
+    .resident-notice-list {
+        display: grid;
+        gap: 10px;
+    }
+
+    .resident-notice {
+        padding: 16px 18px;
+        border: 1px solid #e2e7ee;
+        border-left: 4px solid #567aa7;
+        border-radius: 6px;
+        background: #fbfcfe;
+    }
+
+    .resident-notice[data-urgency="高"] {
+        border-left-color: #b42318;
+        background: #fff8f7;
+    }
+
+    .resident-notice-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 14px;
+        margin-bottom: 9px;
+        color: #66758a;
+        font-size: 13px;
+    }
+
+    .resident-urgency {
+        font-weight: 700;
+    }
+
+    .resident-urgency-high {
+        color: #b42318;
+        font-weight: 800;
+    }
+
+    .resident-notice-text {
+        margin: 0;
+        color: #25364a;
+        font-size: 16px;
+        line-height: 1.7;
+        overflow-wrap: anywhere;
+    }
+
+    .resident-notice-list.is-large .resident-notice-text {
+        font-size: 21px;
+        line-height: 1.8;
+    }
+
+    .resident-empty {
+        margin: 0;
+        padding: 20px;
+        border: 1px dashed #cbd5e2;
+        border-radius: 6px;
+        color: #66758a;
+        text-align: center;
+    }
+
     .dashboard-panel {
         min-width: 0;
         padding: 27px 28px 29px;
@@ -558,6 +666,27 @@
             gap: 20px;
         }
 
+        .resident-notice-panel {
+            margin-bottom: 20px;
+        }
+
+        .resident-notice-heading {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .resident-notice-heading h2 {
+            font-size: 19px;
+        }
+
+        .resident-notice-tools {
+            justify-content: flex-start;
+        }
+
+        .resident-notice {
+            padding: 14px;
+        }
+
         .dashboard-panel {
             padding: 20px 16px;
             border-radius: 10px;
@@ -675,6 +804,38 @@
 
 {% block content %}
 <div class="home-page">
+    <section class="dashboard-panel resident-notice-panel" aria-labelledby="resident-notice-heading">
+        <div class="resident-notice-heading">
+            <h2 id="resident-notice-heading">住民向け発信</h2>
+            {% if resident_notices %}
+                <div class="resident-notice-tools" aria-label="発信の表示設定">
+                    <button id="easyLanguageToggle" type="button" aria-pressed="false">やさしい日本語で表示</button>
+                    <button id="noticeFontToggle" type="button" aria-pressed="false">文字を大きくする</button>
+                </div>
+            {% endif %}
+        </div>
+        {% if resident_notices %}
+            <div class="resident-notice-list" id="residentNoticeList" aria-live="polite">
+                {% for notice in resident_notices %}
+                    <article class="resident-notice" data-urgency="{{ notice.get('urgency', '') }}">
+                        <div class="resident-notice-meta">
+                            <span>{{ notice.get('district') or '地区未設定' }}</span>
+                            <span>避難先: {{ notice.get('shelter') or '未設定' }}</span>
+                            <span class="resident-urgency {% if notice.get('urgency') == '高' %}resident-urgency-high{% endif %}">緊急度: {{ notice.get('urgency') or '未設定' }}</span>
+                            <time>{{ notice.get('created_at') or '日時未設定' }}</time>
+                        </div>
+                        <p class="resident-notice-text">
+                            <span class="notice-normal-text">{{ notice.get('content') or '内容未設定' }}</span>
+                            <span class="notice-easy-text" hidden>{{ notice.get('easy_content') or notice.get('content') or '内容未設定' }}</span>
+                        </p>
+                    </article>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="resident-empty">現在、住民向けの発信はありません。</p>
+        {% endif %}
+    </section>
+
     <div class="home-dashboard">
         <section class="dashboard-panel" aria-labelledby="map-heading">
             <h2 id="map-heading" class="panel-heading"><span class="pin-mark" aria-hidden="true"></span>避難所マップ</h2>
@@ -735,6 +896,33 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    const residentNoticeList = document.getElementById('residentNoticeList');
+    const easyLanguageToggle = document.getElementById('easyLanguageToggle');
+    const noticeFontToggle = document.getElementById('noticeFontToggle');
+
+    if (residentNoticeList && easyLanguageToggle) {
+        let easyLanguageEnabled = false;
+        easyLanguageToggle.addEventListener('click', function() {
+            easyLanguageEnabled = !easyLanguageEnabled;
+            residentNoticeList.querySelectorAll('.resident-notice').forEach(notice => {
+                notice.querySelector('.notice-normal-text').hidden = easyLanguageEnabled;
+                notice.querySelector('.notice-easy-text').hidden = !easyLanguageEnabled;
+            });
+            easyLanguageToggle.setAttribute('aria-pressed', String(easyLanguageEnabled));
+            easyLanguageToggle.textContent = easyLanguageEnabled ? '通常の文章で表示' : 'やさしい日本語で表示';
+        });
+    }
+
+    if (residentNoticeList && noticeFontToggle) {
+        let largeTextEnabled = false;
+        noticeFontToggle.addEventListener('click', function() {
+            largeTextEnabled = !largeTextEnabled;
+            residentNoticeList.classList.toggle('is-large', largeTextEnabled);
+            noticeFontToggle.setAttribute('aria-pressed', String(largeTextEnabled));
+            noticeFontToggle.textContent = largeTextEnabled ? '標準サイズに戻す' : '文字を大きくする';
+        });
+    }
+
     // 地図の初期化（青森市周辺を中心に設定）
     const mapElement = document.getElementById('shelterMap');
     const map = L.map(mapElement).setView([40.8222, 140.7474], 12);

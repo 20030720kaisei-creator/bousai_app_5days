@@ -4,32 +4,268 @@
   <meta charset="utf-8">
   <title>{% block title %}防災アプリ{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: #25364a;
+      background: #f7f8fa;
+      font-family: "Noto Sans JP", "Yu Gothic", sans-serif;
+    }
+
+    .home-header {
+      height: 70px;
+      border-top: 2px solid #5f91dc;
+      background: #2453a1;
+      color: #fff;
+    }
+
+    .home-header-inner {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: min(100% - 40px, 1390px);
+      height: 100%;
+      margin: 0 auto;
+    }
+
+    .home-brand {
+      margin: 0;
+      font-size: 25px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .home-brand a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .home-menu {
+      position: relative;
+    }
+
+    .home-menu summary {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      align-content: center;
+      justify-items: center;
+      gap: 5px;
+      border-radius: 4px;
+      color: #fff;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .home-menu summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .home-menu summary:hover,
+    .home-menu summary:focus-visible {
+      background: rgb(255 255 255 / 14%);
+      outline: 2px solid #fff;
+      outline-offset: 2px;
+    }
+
+    .home-menu summary span {
+      width: 23px;
+      height: 3px;
+      border-radius: 2px;
+      background: currentColor;
+    }
+
+    .home-menu nav {
+      position: absolute;
+      z-index: 1000;
+      top: calc(100% + 8px);
+      right: 0;
+      display: grid;
+      min-width: 220px;
+      padding: 8px;
+      border: 1px solid #e2e7ee;
+      border-radius: 6px;
+      background: #fff;
+      box-shadow: 0 8px 24px rgb(23 42 69 / 18%);
+    }
+
+    .home-menu nav a,
+    .menu-session {
+      padding: 11px 12px;
+      color: #25364a;
+      font-size: 14px;
+      text-decoration: none;
+    }
+
+    .home-menu nav a:hover,
+    .home-menu nav a:focus-visible {
+      border-radius: 4px;
+      background: #eef3fb;
+      color: #2453a1;
+    }
+
+    .menu-session {
+      border-bottom: 1px solid #e7ebf0;
+      color: #66758a;
+    }
+
+    .app-main {
+      width: min(100% - 40px, 1260px);
+      margin: 32px auto 48px;
+    }
+
+    .app-main > h2 {
+      margin: 0 0 10px;
+      color: #16263d;
+      font-size: 26px;
+      line-height: 1.35;
+    }
+
+    .app-main > h3 {
+      margin: 26px 0 12px;
+      color: #25364a;
+      font-size: 19px;
+    }
+
+    .app-main > p {
+      color: #66758a;
+      line-height: 1.65;
+    }
+
+    .app-main a {
+      color: #2453a1;
+    }
+
+    .app-main > form {
+      max-width: 720px;
+      margin: 18px 0;
+      padding: 18px 20px;
+      border: 1px solid #e2e7ee;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .app-main input,
+    .app-main select,
+    .app-main button {
+      min-height: 40px;
+      padding: 8px 11px;
+      border: 1px solid #cbd5e2;
+      border-radius: 5px;
+      background: #fff;
+      color: #25364a;
+      font: inherit;
+    }
+
+    .app-main input:focus-visible,
+    .app-main select:focus-visible,
+    .app-main button:focus-visible {
+      outline: 2px solid #2453a1;
+      outline-offset: 2px;
+    }
+
+    .app-main button {
+      border-color: #2453a1;
+      background: #2453a1;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    .app-main button:hover {
+      background: #1c4383;
+    }
+
+    .app-main hr {
+      border: 0;
+      border-top: 1px solid #dfe5ec;
+    }
+
+    .app-table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid #dce4ed;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .app-table th,
+    .app-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #e5ebf2;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .app-table thead th {
+      background: #eff4fa;
+      color: #344a64;
+      font-size: 13px;
+    }
+
+    .app-table tbody tr:last-child th,
+    .app-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    @media (max-width: 640px) {
+      .home-header-inner {
+        width: calc(100% - 28px);
+      }
+
+      .home-brand {
+        font-size: 22px;
+      }
+
+      .app-main {
+        width: calc(100% - 28px);
+        margin-top: 22px;
+      }
+
+      .app-main > h2 {
+        font-size: 23px;
+      }
+
+      .app-main > form {
+        padding: 15px;
+      }
+    }
+  </style>
   {% block head %}{% endblock %}
 </head>
 <body>
   {% block site_header %}
-  <!-- ヘッダー -->
-  <h1 style="color: blue;">防災アプリ</h1>
-
-  <!-- ナビゲーション -->
-  <nav>
-    <a href="/">ホーム</a> |
-    <a href="/shelter_search">避難所検索</a> |
-    <a href="/shelter_register">避難所登録</a> |
-    <a href="/board">指示・発信ボード</a>
-    ｜
-    {% if session.logged_in %}
-      ログイン中{% if session.username %}（{{ session.username }}）{% endif %}
-      <a href="/logout">ログアウト</a>
-    {% else %}
-      未ログイン
-      <a href="/login">ログイン</a>
-    {% endif %}
-  </nav>
-  <hr>
+  <header class="home-header">
+    <div class="home-header-inner">
+      <h1 class="home-brand"><a href="/">防災アプリ</a></h1>
+      <details class="home-menu">
+        <summary aria-label="メニューを開閉">
+          <span></span><span></span><span></span>
+        </summary>
+        <nav aria-label="メインメニュー">
+          <a href="/">ホーム</a>
+          <a href="/shelter_search">避難所検索</a>
+          <a href="/shelter_register">避難所登録</a>
+          <a href="/board">指示・発信ボード</a>
+          {% if session.logged_in %}
+            <span class="menu-session">ログイン中{% if session.username %}（{{ session.username }}）{% endif %}</span>
+            <a href="/logout">ログアウト</a>
+          {% else %}
+            <span class="menu-session">未ログイン</span>
+            <a href="/login">ログイン</a>
+          {% endif %}
+        </nav>
+      </details>
+    </div>
+  </header>
   {% endblock %}
 
-  <main>
+  <main class="app-main">
     <!-- ここに子テンプレートの content が入る -->
     {% block content %}{% endblock %}
   </main>

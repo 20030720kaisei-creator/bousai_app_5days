@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}発信内容の確認 | 防災アプリ{% endblock %}
+
+{% block content %}
+<style>
+  .confirm-card {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 26px;
+    border: 1px solid #e2e7ee;
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: 0 4px 16px rgb(34 58 90 / 5%);
+  }
+
+  .confirm-card h2 {
+    margin-top: 0;
+    color: #1e3552;
+  }
+
+  .confirm-fields {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    margin: 18px 0 24px;
+    border-top: 1px solid #e5ebf2;
+  }
+
+  .confirm-fields dt,
+  .confirm-fields dd {
+    margin: 0;
+    padding: 12px 10px;
+    border-bottom: 1px solid #e5ebf2;
+  }
+
+  .confirm-fields dt {
+    color: #52647a;
+    font-weight: 700;
+  }
+
+  .confirm-content {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .confirm-urgency-high {
+    color: #b42318;
+    font-weight: 800;
+  }
+
+  .confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .confirm-actions button {
+    min-height: 42px;
+    padding: 9px 15px;
+    border: 1px solid #2453a1;
+    border-radius: 5px;
+    background: #2453a1;
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .confirm-actions button[name="action"][value="edit"] {
+    background: #fff;
+    color: #2453a1;
+  }
+
+  .confirm-error {
+    padding: 12px 14px;
+    border: 1px solid #efc1bd;
+    border-radius: 5px;
+    background: #fff0ee;
+    color: #a12720;
+  }
+
+  @media (max-width: 560px) {
+    .confirm-card { padding: 18px 14px; }
+    .confirm-fields { grid-template-columns: 1fr; }
+    .confirm-fields dt { padding-bottom: 2px; border-bottom: 0; }
+    .confirm-fields dd { padding-top: 4px; }
+    .confirm-actions { display: grid; }
+  }
+</style>
+
+<section class="confirm-card" aria-labelledby="confirm-heading">
+  <h2 id="confirm-heading">発信内容の確認</h2>
+  <p>内容を確認してください。「この内容で発信する」を選ぶまで保存・公開されません。</p>
+  {% if error %}<p class="confirm-error" role="alert">{{ error }}</p>{% endif %}
+  <dl class="confirm-fields">
+    <dt>指示・発信内容</dt><dd class="confirm-content">{{ instruction.content }}</dd>
+    <dt>やさしい日本語</dt><dd class="confirm-content">{{ instruction.easy_content or instruction.content }}</dd>
+    <dt>宛先</dt><dd>{{ instruction.target }}向け</dd>
+    <dt>緊急度</dt><dd class="{% if instruction.urgency == '高' %}confirm-urgency-high{% endif %}">{{ instruction.urgency }}</dd>
+    <dt>対象地区</dt><dd>{{ instruction.district }}</dd>
+    <dt>避難先</dt><dd>{{ instruction.shelter }}</dd>
+    <dt>登録日時</dt><dd>{{ instruction.created_at }}</dd>
+  </dl>
+  <form method="POST" action="{{ url_for('board') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="pending_token" value="{{ instruction.pending_token }}">
+    <div class="confirm-actions">
+      <button type="submit" name="action" value="confirm">この内容で発信する</button>
+      <button type="submit" name="action" value="edit" formnovalidate>内容を修正する</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

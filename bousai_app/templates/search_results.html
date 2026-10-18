@@ -1,19 +1,335 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>検索結果</h2>
+<h2>避難所検索結果</h2>
 {% if query %}
   <p>「{{ query }}」の検索結果</p>
 {% endif %}
 
+{% if error %}
+  <p role="alert">{{ error }}</p>
+{% endif %}
+{% if success %}
+  <p role="status">{{ success }}</p>
+{% endif %}
+
+<p class="results-count">{{ results|length }}件の避難所</p>
+<div class="availability-legend" aria-label="空き状況の凡例">
+  <span class="legend-item"><span class="availability spaces-available">空きあり</span></span>
+  <span class="legend-item"><span class="availability few-spaces">残りわずか</span><span class="legend-note">定員の20%以下</span></span>
+  <span class="legend-item"><span class="availability full">満員・定員超過</span></span>
+  <span class="legend-item"><span class="availability unknown">状況不明</span><span class="legend-note">人数未登録</span></span>
+</div>
+
+<style>
+  .results-count {
+    margin: 0 0 16px;
+    color: #687d95;
+    font-size: 14px;
+  }
+
+  .availability-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    margin: 0 0 16px;
+  }
+
+  .empty-results {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    margin: 8px 0 22px;
+    padding: 24px;
+    border: 1px solid #dce4ed;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .empty-results-icon {
+    display: inline-grid;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border: 2px solid #71839a;
+    border-radius: 50%;
+    color: #566a82;
+    font-size: 19px;
+    font-weight: 700;
+  }
+
+  .empty-results h3 {
+    margin: 2px 0 8px;
+    color: #263950;
+    font-size: 18px;
+  }
+
+  .empty-results p {
+    margin: 0 0 16px;
+    color: #687d95;
+    line-height: 1.6;
+  }
+
+  .retry-search {
+    display: inline-flex;
+    min-height: 40px;
+    align-items: center;
+    padding: 8px 13px;
+    border-radius: 5px;
+    background: #2860ad;
+    color: #fff !important;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .retry-search:hover {
+    background: #204d8c;
+  }
+
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .legend-note {
+    color: #687d95;
+    font-size: 13px;
+  }
+
+  .comparison-table-wrap {
+    overflow-x: auto;
+    border: 1px solid #dce4ed;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .comparison-table {
+    width: 100%;
+    min-width: 1240px;
+    border-collapse: collapse;
+    background: #fff;
+  }
+
+  .comparison-table th,
+  .comparison-table td {
+    padding: 12px 11px;
+    border-bottom: 1px solid #e5ebf2;
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  .comparison-table thead th {
+    height: 70px;
+    background: #eff4fa;
+    color: #344a64;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .comparison-table tbody tr {
+    height: 164px;
+  }
+
+  .comparison-table tbody tr:last-child th,
+  .comparison-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .comparison-table tbody th {
+    min-width: 105px;
+    color: #263950;
+    font-size: 14px;
+  }
+
+  .comparison-table td {
+    color: #40546b;
+    font-size: 14px;
+  }
+
+  .comparison-table .feature-state {
+    min-width: 105px;
+    white-space: nowrap;
+  }
+
+  .availability {
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+
+  .availability-detail {
+    display: block;
+    margin-top: 6px;
+    color: #687d95;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .spaces-available {
+    background: #e6f5eb;
+    color: #267447;
+  }
+
+  .few-spaces {
+    background: #fff2d7;
+    color: #91621a;
+  }
+
+  .full,
+  .over-capacity {
+    background: #fce9e7;
+    color: #a83f36;
+  }
+
+  .unknown {
+    background: #edf1f5;
+    color: #65778a;
+  }
+
+  .staff-update-form {
+    display: grid;
+    min-width: 330px;
+    gap: 8px;
+  }
+
+  .staff-field-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .staff-update-form label {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    color: #64778c;
+    font-size: 12px;
+  }
+
+  .staff-update-form input,
+  .staff-update-form select {
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    padding: 5px 8px;
+    border: 1px solid #d1dbe6;
+    border-radius: 5px;
+    background: #fff;
+    color: #263950;
+    font: inherit;
+    font-size: 14px;
+  }
+
+  .staff-update-form button {
+    justify-self: start;
+    min-height: 36px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 5px;
+    background: #2860ad;
+    color: #fff;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .staff-update-form button:hover {
+    background: #204d8c;
+  }
+
+  @media (max-width: 640px) {
+    .availability-legend {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+</style>
+
 {% if results %}
-  <ul>
-    {% for shelter in results %}
-    <li>{{ shelter.name }}</li>
-    {% endfor %}
-  </ul>
+  <div class="comparison-table-wrap" role="region" aria-label="避難所比較結果" tabindex="0">
+    <table class="comparison-table">
+      <thead>
+        <tr>
+          <th scope="col">避難所名</th>
+          <th scope="col">住所</th>
+          <th scope="col">ペット同伴</th>
+          <th scope="col">バリアフリー</th>
+          <th scope="col">収容人数</th>
+          <th scope="col">現在の避難者数</th>
+          <th scope="col">空き状況</th>
+          <th scope="col">開設状況</th>
+          {% if session.logged_in %}<th scope="col">職員更新</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in results %}
+          <tr>
+            <th scope="row">{{ item.shelter.name }}</th>
+            <td>{{ item.address }}</td>
+            <td class="feature-state">🐾 {{ item.pet_label }}</td>
+            <td class="feature-state">♿ {{ item.barrier_free_label }}</td>
+            <td>{% if item.capacity_display == '未登録' %}未登録{% else %}{{ item.capacity_display }}人{% endif %}</td>
+            <td>{% if item.evacuees_display == '未登録' %}未登録{% else %}{{ item.evacuees_display }}人{% endif %}</td>
+            <td>
+              <span class="availability {{ item.availability_class }}">{{ item.availability_label }}</span>
+              <span class="availability-detail">{{ item.availability_detail }}</span>
+            </td>
+            <td>{{ item.status_display }}</td>
+            {% if session.logged_in %}
+              <td>
+                <form class="staff-update-form" method="POST" action="{{ url_for('update_shelter_comparison', shelter_id=item.shelter.id) }}">
+                  <input type="hidden" name="q" value="{{ query }}">
+                  <input type="hidden" name="district" value="{{ district }}">
+                  <div class="staff-field-pair">
+                    <label>収容人数
+                      <input type="number" name="capacity" min="1" step="1" value="{{ item.capacity_display if item.capacity_display != '未登録' else '' }}" required>
+                    </label>
+                    <label>現在の避難者数
+                      <input type="number" name="evacuees" min="0" step="1" value="{{ item.evacuees_display if item.evacuees_display != '未登録' else '' }}" required>
+                    </label>
+                  </div>
+                  <div class="staff-field-pair">
+                    <label>ペット同伴
+                      <select name="pet_allowed" required>
+                        <option value="unknown" {% if item.shelter.get('pet_allowed') is none %}selected{% endif %}>未確認</option>
+                        <option value="yes" {% if item.shelter.get('pet_allowed') is sameas true %}selected{% endif %}>可</option>
+                        <option value="no" {% if item.shelter.get('pet_allowed') is sameas false %}selected{% endif %}>不可</option>
+                      </select>
+                    </label>
+                    <label>バリアフリー設備
+                      <select name="barrier_free" required>
+                        <option value="unknown" {% if item.shelter.get('barrier_free') is none %}selected{% endif %}>未確認</option>
+                        <option value="yes" {% if item.shelter.get('barrier_free') is sameas true %}selected{% endif %}>あり</option>
+                        <option value="no" {% if item.shelter.get('barrier_free') is sameas false %}selected{% endif %}>なし</option>
+                      </select>
+                    </label>
+                  </div>
+                  <button type="submit">人数・設備を更新</button>
+                </form>
+              </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 {% else %}
-  <p>該当する避難所が見つかりませんでした</p>
+  <section class="empty-results" role="status" aria-live="polite">
+    <span class="empty-results-icon" aria-hidden="true">i</span>
+    <div>
+      <h3>条件に合う避難所がありません</h3>
+      <p>避難所名や住所の条件を変更して、もう一度検索してください。</p>
+      <a class="retry-search" href="{{ url_for('shelter_search', q=query) }}">条件を変えて再検索</a>
+    </div>
+  </section>
 {% endif %}
 
 <p>

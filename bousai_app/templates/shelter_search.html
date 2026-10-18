@@ -2,12 +2,12 @@
 
 {% block content %}
 <h2>避難所検索</h2>
-<p>登録されている避難所を確認できます。</p>
+<p>避難所名や住所で検索し、設備や混雑状況を比較できます。</p>
 
 <form method="GET" action="{{ url_for('search_results') }}">
 	<p>
-		<label for="shelter-query">避難所名</label><br>
-		<input type="search" id="shelter-query" name="q" placeholder="避難所名を入力" required>
+		<label for="shelter-query">避難所名・住所</label><br>
+		<input type="search" id="shelter-query" name="q" value="{{ search_term }}" placeholder="避難所名または住所を入力">
 		<button type="submit">検索</button>
 	</p>
 </form>
