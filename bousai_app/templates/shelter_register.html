@@ -2,22 +2,61 @@
 
 {% block content %}
 <h2>避難所登録</h2>
-<p>新しい避難所情報を登録します。</p>
+<p>青森市内の避難所を登録・管理します。</p>
 
 <!-- 成功・エラーメッセージ表示 -->
 {% if success %}
-  <p>{{ message }}</p>
+  <p role="status">{{ message }}</p>
 {% endif %}
 
 {% if error %}
-  <p>{{ message }}</p>
+  <p role="alert">{{ message }}</p>
 {% endif %}
 
+<h3>新しい避難所を登録</h3>
 <form method="POST">
+  <input type="hidden" name="action" value="register">
   <p>
     <label for="name">避難所名（必須）</label><br>
-    <input type="text" id="name" name="name">
+    <input type="text" id="name" name="name" required>
+  </p>
+  <p>
+    <label for="address">住所または施設名（青森市内・必須）</label><br>
+    <input type="text" id="address" name="address" placeholder="例: 青森市役所、または中央1丁目1-1" required>
+  </p>
+  <p>
+    <label for="status">開設状況</label><br>
+    <select id="status" name="status" required>
+      <option value="未開設" selected>未開設</option>
+      <option value="開設中">開設中</option>
+      <option value="閉鎖">閉鎖</option>
+    </select>
   </p>
   <p><button type="submit">登録</button></p>
 </form>
+
+{% if shelters %}
+  <h3>登録済み避難所</h3>
+  {% for shelter in shelters %}
+    <form method="POST">
+      <input type="hidden" name="action" value="update_shelter">
+      <input type="hidden" name="shelter_id" value="{{ shelter.id }}">
+      <p><strong>{{ shelter.name }}</strong></p>
+      <p>
+        <label for="status-{{ shelter.id }}">開設状況</label><br>
+        <select id="status-{{ shelter.id }}" name="status" required>
+          {% for status_option in ['未開設', '開設中', '閉鎖'] %}
+            <option value="{{ status_option }}" {% if shelter.get('status', '未開設') == status_option %}selected{% endif %}>{{ status_option }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="address-{{ shelter.id }}">住所または施設名（空欄なら現在の住所を維持）</label><br>
+        <input type="text" id="address-{{ shelter.id }}" name="address" value="{{ shelter.get('address', '') }}" placeholder="青森市内の住所または施設名">
+      </p>
+      <p><button type="submit">情報を更新</button></p>
+    </form>
+    <hr>
+  {% endfor %}
+{% endif %}
 {% endblock %}

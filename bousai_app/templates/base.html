@@ -4,10 +4,12 @@
   <meta charset="utf-8">
   <title>{% block title %}防災アプリ{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {% block head %}{% endblock %}
 </head>
 <body>
+  {% block site_header %}
   <!-- ヘッダー -->
-  <h1>防災アプリ</h1>
+  <h1 style="color: blue;">防災アプリ</h1>
 
   <!-- ナビゲーション -->
   <nav>
@@ -25,6 +27,7 @@
     {% endif %}
   </nav>
   <hr>
+  {% endblock %}
 
   <main>
     <!-- ここに子テンプレートの content が入る -->

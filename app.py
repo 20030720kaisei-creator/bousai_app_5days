@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, request, render_template, session, redirect, url_for
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, urlencode
 from functools import wraps
 import json
 import os
@@ -28,8 +28,9 @@ ADMIN_CREDENTIALS = {
 PREFECTURE_CODE = "020000"  # 青森県
 AREA_NAME = "青森市"
 
-# ワークショップ課題：青森市の市区町村コードに変更する
-AREA_CODE = "1420500"
+# 気象庁の市区町村コード（青森市）
+AREA_CODE = "0220100"
+SHELTER_STATUSES = ("未開設", "開設中", "閉鎖")
 
 WARNING_URL = (
     f"https://www.jma.go.jp/bosai/warning/data/r8/{PREFECTURE_CODE}.json"
@@ -78,6 +79,12 @@ WARNING_CODES = {
     "49": "レベル4土砂災害危険警報"
 }
 
+WARNING_CATEGORIES = {
+    **{code: "特別警報" for code in ("32", "33", "35", "36", "37", "38", "39")},
+    **{code: "警報" for code in ("02", "03", "04", "05", "06", "07", "08", "09", "43", "48", "49")},
+    **{code: "注意報" for code in ("10", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "29")},
+}
+
 # ────────────────────────────────
 # サンプルデータの読み込み
 DATA_FILE = os.path.join(APP_DIR, 'data', 'shelters.json')
@@ -101,6 +108,33 @@ def save_instructions():
             json.dump(instructions, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+def save_shelters():
+    """避難所データをファイルに保存する"""
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(shelters, f, ensure_ascii=False, indent=2)
+
+def geocode_shelter_address(address):
+    """青森市の住所をOpenStreetMapのNominatimで座標に変換する"""
+    query = urlencode({
+        'q': f'青森市 {address}',
+        'format': 'jsonv2',
+        'limit': 1,
+        'countrycodes': 'jp'
+    })
+    request = urllib.request.Request(
+        f'https://nominatim.openstreetmap.org/search?{query}',
+        headers={'User-Agent': 'BousaiApp/1.0'}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        results = json.loads(response.read())
+
+    if not results or '青森市' not in results[0].get('display_name', ''):
+        return None
+    return {
+        'lat': float(results[0]['lat']),
+        'lng': float(results[0]['lon'])
+    }
 # ────────────────────────────────
 
 # ────────────────────────────────
@@ -152,11 +186,13 @@ def parse_area_warnings(warning_data):
     warnings = []
     seen_codes = set()
     report_datetimes = []
+    reports = sorted(
+        (report for report in warning_data if isinstance(report, dict)),
+        key=lambda report: report.get("reportDatetime", ""),
+        reverse=True
+    )
 
-    for report in warning_data:
-        if not isinstance(report, dict):
-            continue
-
+    for report in reports:
         report_datetime = report.get("reportDatetime")
         if isinstance(report_datetime, str) and report_datetime:
             report_datetimes.append(report_datetime)
@@ -190,7 +226,10 @@ def parse_area_warnings(warning_data):
 
             status = kind.get("status", "")
             code = kind.get("code", "")
-            if status not in ("発表", "継続") or not code or code in seen_codes:
+            if not code or code in seen_codes:
+                continue
+            seen_codes.add(code)
+            if status not in ("発表", "継続"):
                 continue
 
             warnings.append({
@@ -199,9 +238,11 @@ def parse_area_warnings(warning_data):
                     f"不明な警報・注意報 (コード: {code})"
                 ),
                 "code": code,
-                "status": status
+                "status": status,
+                "category": WARNING_CATEGORIES.get(code, "警報・注意報"),
+                "report_datetime": report_datetime or "",
+                "report_time": format_report_time(report_datetime)
             })
-            seen_codes.add(code)
 
     latest_report_datetime = max(report_datetimes, default="")
     return warnings, latest_report_datetime
@@ -237,7 +278,25 @@ def get_weather_warnings():
 @app.route('/')
 def index():
     resident_notices = [i for i in instructions if i.get('target') == '住民']
-    return render_template('index.html', resident_notices=resident_notices)
+    map_shelters = [
+        {
+            'id': shelter.get('id'),
+            'name': shelter.get('name', ''),
+            'lat': shelter.get('lat'),
+            'lng': shelter.get('lng'),
+            'status': shelter.get('status', '未開設')
+        }
+        for shelter in shelters
+        if isinstance(shelter.get('lat'), (int, float))
+        and isinstance(shelter.get('lng'), (int, float))
+    ]
+    unlocated_shelter_count = len(shelters) - len(map_shelters)
+    return render_template(
+        'index.html',
+        resident_notices=resident_notices,
+        map_shelters=map_shelters,
+        unlocated_shelter_count=unlocated_shelter_count
+    )
 
 # ログインページ
 @app.route('/login', methods=['GET', 'POST'])
@@ -278,10 +337,126 @@ def logout():
     return redirect(url_for('index'))
 
 # 避難所登録ページ※user が避難所登録ページについて具体的に修正指示しない限り、このコードは正しいのでこのまま保持すること。
-@app.route('/shelter_register')
+@app.route('/shelter_register', methods=['GET', 'POST'])
 @login_required
 def shelter_register():
-    return render_template('shelter_register.html')
+    if request.method == 'POST':
+        if request.form.get('action') == 'update_shelter':
+            try:
+                shelter_id = int(request.form.get('shelter_id', ''))
+            except ValueError:
+                shelter_id = None
+            shelter = next((item for item in shelters if item.get('id') == shelter_id), None)
+            status = request.form.get('status', '')
+            if not shelter or status not in SHELTER_STATUSES:
+                return render_template(
+                    'shelter_register.html',
+                    shelters=shelters,
+                    error=True,
+                    message='避難所または開設状況を確認してください'
+                )
+
+            address = request.form.get('address', '').strip()
+            location = None
+            if address:
+                try:
+                    location = geocode_shelter_address(address)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    return render_template(
+                        'shelter_register.html',
+                        shelters=shelters,
+                        error=True,
+                        message='住所から位置情報を取得できませんでした。時間をおいて再度お試しください。'
+                    )
+                if not location:
+                    return render_template(
+                        'shelter_register.html',
+                        shelters=shelters,
+                        error=True,
+                        message='青森市内で検索できる住所または施設名を入力してください'
+                    )
+
+            previous_values = shelter.copy()
+            shelter['status'] = status
+            if location:
+                shelter.update(address=address, **location)
+            try:
+                save_shelters()
+            except OSError:
+                shelter.clear()
+                shelter.update(previous_values)
+                return render_template(
+                    'shelter_register.html',
+                    shelters=shelters,
+                    error=True,
+                    message='保存に失敗しました。時間をおいて再度お試しください。'
+                )
+            return render_template(
+                'shelter_register.html',
+                shelters=shelters,
+                success=True,
+                message='避難所情報を更新しました'
+            )
+
+        name = request.form.get('name', '').strip()
+        address = request.form.get('address', '').strip()
+        status = request.form.get('status', '未開設')
+        if not name or not address:
+            return render_template(
+                'shelter_register.html',
+                shelters=shelters,
+                error=True,
+                message='避難所名と住所を入力してください'
+            )
+        if status not in SHELTER_STATUSES:
+            return render_template(
+                'shelter_register.html',
+                shelters=shelters,
+                error=True,
+                message='開設状況を選択してください'
+            )
+        try:
+            location = geocode_shelter_address(address)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return render_template(
+                'shelter_register.html',
+                shelters=shelters,
+                error=True,
+                message='住所から位置情報を取得できませんでした。時間をおいて再度お試しください。'
+            )
+        if not location:
+            return render_template(
+                'shelter_register.html',
+                shelters=shelters,
+                error=True,
+                message='青森市内で検索できる住所または施設名を入力してください'
+            )
+
+        next_id = max((shelter.get('id', 0) for shelter in shelters), default=0) + 1
+        shelters.append({
+            'id': next_id,
+            'name': name,
+            'address': address,
+            'status': status,
+            **location
+        })
+        try:
+            save_shelters()
+        except OSError:
+            shelters.pop()
+            return render_template(
+                'shelter_register.html',
+                shelters=shelters,
+                error=True,
+                message='保存に失敗しました。時間をおいて再度お試しください。'
+            )
+        return render_template(
+            'shelter_register.html',
+            shelters=shelters,
+            success=True,
+            message='登録しました'
+        )
+    return render_template('shelter_register.html', shelters=shelters)
 
 # 避難所検索ページ
 @app.route('/shelter_search')
@@ -304,8 +479,16 @@ def board():
 # 検索結果ページ：templates/search_results.html を返す
 @app.route('/search_results')
 def search_results():
-    results = filter_shelters(request.args.get('district'))
-    return render_template('search_results.html', results=results)
+    query = request.args.get('q', '').strip()
+    if query:
+        normalized_query = query.casefold()
+        results = [
+            shelter for shelter in shelters
+            if normalized_query in shelter.get('name', '').casefold()
+        ]
+    else:
+        results = filter_shelters(request.args.get('district'))
+    return render_template('search_results.html', results=results, query=query)
 
 # JSON API：/shelters?district=地区名
 @app.route('/shelters', methods=['GET'])
